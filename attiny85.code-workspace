@@ -1,0 +1,16 @@
+{
+	"folders": [
+		{
+			"path": "."
+		}
+	],
+	"settings": {
+		"files.associations": {
+			"*.rmd": "markdown",
+			"io.h": "c",
+			"interrupt.h": "c",
+			"power.h": "c",
+			"wdt.h": "c"
+		}
+	}
+}

@@ -1,0 +1,5 @@
+avr-gcc -c -mmcu=attiny  xxx.c
+avr-gcc -mmcu=attiny xx.o xx.o
+avr-objcopy -O ihex -j .text -j data a.out a.hex
+
+avrdude -p attiny85 -c usbtiny -U flash:w:a.hex:i 
