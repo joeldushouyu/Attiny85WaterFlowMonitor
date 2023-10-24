@@ -8,25 +8,11 @@
 #include <avr/wdt.h>
 #include <avr/interrupt.h>
 #include <avr/io.h>
-// #define SREG  REG(0x1F)
 
-// #define DDRB REG(0x17)
-// #define PORTB REG(0x18)
-
-// #define CLKPR REG(0x26)
-// //timer
-// #define GTCCR REG(0x2C)
-// #define TCCR0A REG(0x2A)
-// #define TCCR0B REG(0x33)
-// #define TCNT0 REG(0x32)
-// #define OCR0A REG(0x29)
-// #define TIMSK REG(0x39)
-// #define TIFR REG(0x38)
-
-volatile unsigned long count = 0;
+volatile unsigned long timer0Counter = 0;
 volatile unsigned const char LEDPIN = 0;
 volatile unsigned const char EXTERNALLEDPIN = 1;
-volatile unsigned char adcStateVariable = 0; //0 means reading from PB3, 1 means from PB4
+volatile unsigned char adcStateVariable = 0; // 0 means reading from PB3, 1 means from PB4
 
 #define BV_MASK(bit) (1 << (bit))
 // the trigger function for timer 0
@@ -35,7 +21,7 @@ void __vector_10(void)
 {
 
     TIFR |= ~BV_MASK(4); // clear the interrupt flag
-    count++;
+    timer0Counter++;
 }
 
 void disableGlobalInterrupt()
@@ -51,9 +37,9 @@ void enableGlobalInterrupt()
 void delayMillisecond(unsigned long time)
 {
 
-    count = 0;
+    timer0Counter = 0;
 
-    while (count < time)
+    while (timer0Counter < time)
     {
     }
 }
@@ -109,15 +95,13 @@ void setupADC(char pin)
         // pin is 4
         ADMUX = 0x2;
     }
-    // // choose source
-    // ADCSRB |= BV_MASK(2) | BV_MASK(1);
+    // run in free running mode
 
     // enable ADC
     ADCSRA |= _BV(ADIE);
 
-        ADCSRA |= _BV(ADEN);  // enable ADC
-        ADCSRA |= _BV(ADSC); // Start first conversion
-    // do not start conversion right now
+    ADCSRA |= _BV(ADEN); // enable ADC
+    ADCSRA |= _BV(ADSC); // Start first conversion
 }
 void init()
 {
@@ -127,7 +111,6 @@ void init()
     setUpTimer();
 
     setFallTriggerOnPCINTx(2); // set PCIN2 as fall triggered
-    setupADC(3);
     enableGlobalInterrupt();
 }
 int main()
@@ -213,7 +196,7 @@ ISR(ADC_vect)
 {
 
     // clear interrupt flag
-    ADCSRA|= ~BV_MASK(4); // should do it automatically?
+    ADCSRA |= ~BV_MASK(4); // should do it automatically?
 
     // PORTB ^= (1 << LEDPIN);
 
@@ -225,14 +208,16 @@ ISR(ADC_vect)
 
         if (adcStateVariable == 0)
         {
-            PORTB = PORTB & ~(1<<LEDPIN);
+            PORTB = PORTB & ~(1 << LEDPIN);
         }
         else
         {
-            PORTB =PORTB &~(1<<EXTERNALLEDPIN);
+            PORTB = PORTB & ~(1 << EXTERNALLEDPIN);
         }
         // PORTB |=   (0 << LEDPIN);
-    }else{
+    }
+    else
+    {
         if (adcStateVariable == 0)
         {
             PORTB |= (1 << LEDPIN);
@@ -247,16 +232,13 @@ ISR(ADC_vect)
     {
         adcStateVariable = 1;
 
-        ADCSRA = 0;   
+        ADCSRA = 0;
         setupADC(4);
-
-
     }
     else
     {
         // PORTB |= BV_MASK(2);
         adcStateVariable = 0;
-        ADCSRA = 0;   // disable ADC
-
+        ADCSRA = 0; // disable ADC
     }
 }
