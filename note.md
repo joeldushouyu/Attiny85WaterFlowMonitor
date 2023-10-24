@@ -13,7 +13,7 @@ PORTB |= (1<<5) turn on
 PORTB &= ~(1<<5) turn off
 PORTB ^= (1<<5)  toggle
 
-## REFERENCE:
+## REFERENCE:ca
 https://medium.com/@bradford_hamilton/bare-metal-programming-attiny85-22be36f4e9ca
 
 ## 1. change fuse bit for clock (optional)
@@ -27,6 +27,12 @@ Change lfuse from 0x62 -> 0xE2
 avrdude -p t85 -c usbtiny -U lfuse:w:0xE2:m
 ```
 
+<!-- 
+# 2. change by disable reset pin
+change HFUSe from 0xDF -> 0x5F
+```bash
+avrdude -p t85 -c usbtiny -U hfuse:w:0x5F:m
+``` -->
 
 #compile our code
 

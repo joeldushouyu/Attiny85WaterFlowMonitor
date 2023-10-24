@@ -8,11 +8,23 @@
 #include <avr/wdt.h>
 #include <avr/interrupt.h>
 #include <avr/io.h>
+#define time_t unsigned long long
 
-volatile unsigned long timer0Counter = 0;
-volatile unsigned const char LEDPIN = 0;
+volatile unsigned long delayMilliCounter = 0;
+// volatile unsigned const char LEDPIN = 0;
 volatile unsigned const char EXTERNALLEDPIN = 1;
 volatile unsigned char adcStateVariable = 0; // 0 means reading from PB3, 1 means from PB4
+
+volatile time_t timeCounter = 0;
+
+volatile char stateStatusTank1 = 100; // 0 means no waterflow, 1 means water flow, 2 is error, 100 means need initalize
+volatile char previousStateStatusTank1 = 0;
+const time_t maxFlowTimeTank1 = 1;
+// volatile char maxFlowTimeErrorCounterTank1 = 0;
+const time_t maxNoFlowTimeTank1 = 2;
+// volatile char maxNoFlowTimeErrorCounterTank1 = 0;
+volatile time_t startFlowTimeTank1;
+volatile time_t endFlowRateTimeTank1;
 
 #define BV_MASK(bit) (1 << (bit))
 // the trigger function for timer 0
@@ -21,7 +33,7 @@ void __vector_10(void)
 {
 
     TIFR |= ~BV_MASK(4); // clear the interrupt flag
-    timer0Counter++;
+    delayMilliCounter++;
 }
 
 void disableGlobalInterrupt()
@@ -37,9 +49,9 @@ void enableGlobalInterrupt()
 void delayMillisecond(unsigned long time)
 {
 
-    timer0Counter = 0;
+    delayMilliCounter = 0;
 
-    while (timer0Counter < time)
+    while (delayMilliCounter < time)
     {
     }
 }
@@ -103,10 +115,277 @@ void setupADC(char pin)
     ADCSRA |= _BV(ADEN); // enable ADC
     ADCSRA |= _BV(ADSC); // Start first conversion
 }
+
+time_t readTimeCounter()
+{
+    return timeCounter;
+}
+time_t timeDifferenceInMinute(time_t t)
+{
+    return t / 60;
+}
+time_t timeDifference(time_t oldTime, time_t newerTime)
+{
+    return newerTime - oldTime;
+}
+char detectFlowSensor1()
+{
+    if ((PINB & BV_MASK(0)) == 0)
+    {
+        // means no water flow
+        return 0;
+    }
+    else
+    {
+        return 1;
+    }
+}
+void updateStateStatus(volatile char *previousStatus, volatile char *stateStatus, char newStatus)
+{
+
+    *previousStatus = *stateStatus;
+    *stateStatus = newStatus;
+}
+
+void controlLEDBaseOnStatus(char stateStatus, char previousStateStatus, char errorLEDPin)
+{
+
+    // for our strategy, different LED has different delay time period
+
+    // constant water flow: just turn on the LED
+    // no water flow: toggled LEd
+
+    // // 1. turn off the led (in sink operation)
+    // PORTB |= (1 << errorLEDPin);
+    // SHOULD error be erased?
+    if ( previousStateStatus == 2 ||stateStatus == 2 )
+    {
+        // digitalWrite(errorLEDPin, HIGH);
+        //  means in error
+        if (stateStatus == 0 || previousStateStatus == 0)
+        {
+            // means no flow present
+            // toggle led
+            PORTB ^= (1 << errorLEDPin);
+            // digitalWrite(noFlowPresentLEDPin, HIGH);
+        }else
+        {
+            // means constant water flow
+            // just turn on the error led
+            PORTB = PORTB & ~(1 << errorLEDPin);
+            // digitalWrite(flowPresentLEDPin, HIGH);
+        }
+
+        
+    }
+    else
+    {
+        // means it is normal, no red light
+
+        PORTB |= (1 << errorLEDPin); // note is is in sink configure
+    }
+}
+
+void readTankSensorLogic(char sensorVal, time_t timeNow, volatile time_t *startFlowTimePtr, volatile time_t *endFlowRateTimePtr,
+                         volatile char *stateStatusPtr, volatile char *previousStateStatusPtr,
+                         const time_t maxFlowTime,
+                         const time_t maxNoFlowTime)
+{
+
+    //   char *noFlowMessage, *constantFlowMessage;
+    //   if(tankNumber == 1){
+    //     //Serial.println("********** Tank 1 ***********");
+    //     noFlowMessage = "No water flow in tank 1";
+    //     constantFlowMessage = "constant water flow in tank 1";
+    //   }else if(tankNumber == 2){
+    //     //Serial.println("********** Tank 2 ***********");
+    //     noFlowMessage = "No water flow in tank 2";
+    //     constantFlowMessage = "constant water flow in tank 2";
+    //   }else{
+    //     //Serial.println("********** Tank 3 ***********");
+    //     noFlowMessage = "No water flow in tank 3";
+    //     constantFlowMessage = "constant water flow in tank 3";
+    //   }
+    ////Serial.print("the curent state is ");
+    ////Serial.println(*stateStatusPtr, DEC);
+    ////Serial.print("The previous state is ");
+    ////Serial.println(*previousStateStatusPtr, DEC);
+    ////Serial.print("The current sensor reading is ");
+    ////Serial.println(sensorVal, DEC);
+
+    if (*stateStatusPtr == 100)
+    {
+        // means need initialize
+        if (sensorVal == 1)
+        {
+            *startFlowTimePtr = timeNow;
+            updateStateStatus(previousStateStatusPtr, stateStatusPtr, 1);
+        }
+        else
+        {
+            *endFlowRateTimePtr = timeNow;
+            updateStateStatus(previousStateStatusPtr, stateStatusPtr, 0);
+        }
+    }
+    else if (*stateStatusPtr == 0)
+    {
+        // means no water flow
+
+        if (sensorVal == 1)
+        {
+            // means flow  start
+            *startFlowTimePtr = timeNow;
+            updateStateStatus(previousStateStatusPtr, stateStatusPtr, 1);
+            // *maxFlowTimeErrorCounterPtr = 0;
+            // *maxNoFlowTimeErrorCounterPtr = 0;
+        }
+        else
+        {
+            // means no flow
+            time_t difference = timeDifference(*endFlowRateTimePtr, timeNow);
+            time_t minute = timeDifferenceInMinute(difference);
+            ////Serial.print("The non water flow time difference in second is ");
+            ////Serial.print(difference);
+
+            ////Serial.print("The max no flowtime error counter is ");
+            ////Serial.println(*maxNoFlowTimeErrorCounterPtr, DEC);
+
+            // int temp = (minute - maxNoFlowTimeTank1 * maxNoFlowTimeErrorCounterTank1);
+            // ////Serial.print("The no water flow differece is ");
+            // ////Serial.println(temp);
+            // if ((minute - maxNoFlowTime * (*maxNoFlowTimeErrorCounterPtr)) >= maxNoFlowTime)
+            if (minute >= maxNoFlowTime)
+            {
+                // need to trigger an error state to send email
+                updateStateStatus(previousStateStatusPtr, stateStatusPtr, 2);
+            }
+            else
+            {
+                // let us continue waiting
+                // this could mean
+                // no error happen, maxNoFlowTimeErrorCounterTank1 ==0
+                // or error already happened once, and we already send a email about it.
+                ;
+            }
+        }
+    }
+    else if (*stateStatusPtr == 1)
+    {
+        if (sensorVal == 1)
+        {
+            // water is flowing;
+
+            time_t difference = timeDifference(*startFlowTimePtr, timeNow);
+            time_t min = timeDifferenceInMinute(difference);
+            ////Serial.print("The water flow time difference in second is ");
+            ////Serial.println(difference);
+
+            ////Serial.print("The max flowtime error counter is ");
+            ////Serial.println(*maxFlowTimeErrorCounterPtr, DEC);
+            // int temp = min - maxFlowTimeTank1 * maxFlowTimeErrorCounterTank1;
+            // // ////Serial.print("The water flow difference is ");
+            // // ////Serial.println(temp, DEC);
+            // if ((min - maxFlowTime * (*maxFlowTimeErrorCounterPtr)) >= maxFlowTime)
+            if (min >= maxFlowTime)
+            {
+                // trigger into error state
+                updateStateStatus(previousStateStatusPtr, stateStatusPtr, 2);
+            }
+            else
+            {
+                // continue waiting
+                // means either error alread happened and already send out a email about it,  maxFlowTimeErrorCounterTank1>1, or no error happened yet.
+            }
+        }
+        else
+        {
+            // means need to switch to state 0
+            updateStateStatus(previousStateStatusPtr, stateStatusPtr, 0);
+            // *maxFlowTimeErrorCounterPtr = 0;
+            // *maxNoFlowTimeErrorCounterPtr = 0;
+            *endFlowRateTimePtr = timeNow;
+        }
+    }
+    else
+    {
+        // do nothing in the error state, since I am not sending any more message to email
+        // TODO: maybe do an alarm?
+
+        if (*previousStateStatusPtr == 1 )
+        {
+            //   Serial.print("Error for water is flowing: ");
+            //   time_t diff = timeDifference(*startFlowTimePtr, timeNow);
+            //   int minutes = timeDifferenceInMinute(diff);
+            //   Serial.println(minutes, DEC);
+            //   if (*maxFlowTimeErrorCounterPtr == 0) {
+            //     bool status = sendEmailAlert(constantFlowMessage);
+            //     if (status == false) {
+            //       // means gmail did not send through
+            //       // do not update status, comeback again
+            //       *maxFlowTimeErrorCounterPtr = 0;  // means come back later
+            //       *maxNoFlowTimeErrorCounterPtr = 0;
+            //       Serial.println("Failed to send out constant waterflow email");
+
+            //     } else {
+            //       // means able to send warning email
+            //       updateStateStatus(previousStateStatusPtr, stateStatusPtr, 1);
+            //       (*maxFlowTimeErrorCounterPtr)++;
+            //       (*maxNoFlowTimeErrorCounterPtr) = 0;
+            //     }
+            //   } else {
+            //     // error email already send, do not send email, but update the rest.
+            //     updateStateStatus(previousStateStatusPtr, stateStatusPtr, 1);
+            //     (*maxFlowTimeErrorCounterPtr)++;
+            //     (*maxNoFlowTimeErrorCounterPtr) = 0;
+            //   }
+     
+            updateStateStatus(previousStateStatusPtr, stateStatusPtr, 1);
+        }
+        else
+        {
+            //   Serial.println("Error for no water is flowing");
+            //   time_t diff = timeDifference(*endFlowRateTimePtr, timeNow);
+            //   int minutes = timeDifferenceInMinute(diff);
+            //   Serial.println(minutes);
+
+            //   if (*maxNoFlowTimeErrorCounterPtr == 0) {
+            //     bool status = sendEmailAlert(noFlowMessage);
+            //     if (status == false) {
+            //       // means gmail did not send through
+            //       // do not update status, comeback again
+            //       *maxFlowTimeErrorCounterPtr = 0;  // means come back later
+            //       *maxNoFlowTimeErrorCounterPtr = 0;
+            //     } else {
+            //       // means able to send warning email
+            //       updateStateStatus(previousStateStatusPtr, stateStatusPtr, 0);
+            //       *maxFlowTimeErrorCounterPtr = 0;
+            //       (*maxNoFlowTimeErrorCounterPtr)++;
+            //     }
+            //   } else {
+            //     // error email already send, do not send email, but update the rest
+            //     updateStateStatus(previousStateStatusPtr, stateStatusPtr, 0);
+            //     *maxFlowTimeErrorCounterPtr = 0;
+            //     (*maxNoFlowTimeErrorCounterPtr)++;
+            //   }
+            // controlLEDBaseOnStatus(0,2, EXTERNALLEDPIN);
+            updateStateStatus(previousStateStatusPtr, stateStatusPtr, 0);
+        }
+    }
+
+
+    controlLEDBaseOnStatus(*stateStatusPtr, *previousStateStatusPtr, EXTERNALLEDPIN);
+    //   if(tankNumber == 1){
+    //controlLEDBaseOnStatus(*stateStatusPtr, *previousStateStatusPtr, EXTERNALLEDPIN);
+    //   }else if(tankNumber == 2){
+    //     controlLEDBaseOnStatus(stateStatusTank2, previousStateStatusTank2, ERROR_LED_TANK_2, FLOW_PRESENT_TANK_2, NO_FLOW_PRESENT_TANK_2);
+    //   }else{
+    //     controlLEDBaseOnStatus(stateStatusTank3, previousStateStatusTank3, ERROR_LED_TANK_3, FLOW_PRESENT_TANK_3, NO_FLOW_PRESENT_TANK_3);
+    //   }
+}
+
 void init()
 {
     disableGlobalInterrupt();
-    enableIOOutput(LEDPIN);
     enableIOOutput(EXTERNALLEDPIN);
     setUpTimer();
 
@@ -117,7 +396,7 @@ int main()
 {
     // SREG |= BV_MASK(7);
     init();
-    // PORTB |=   (1<< LEDPIN);
+    PORTB |=   (1<< EXTERNALLEDPIN); // turn off led
     // IDEAS
     //  use PCIE! to detect inital press
     //  then use software trigger on INT0 to configure and read from 2ADCd
@@ -136,10 +415,17 @@ int main()
         //     adcStateVariable = 0;
         //     setupADC(3);
         // }
-
-        delayMillisecond(1000);
-
         // PORTB ^=   (1 << LEDPIN);
+        readTankSensorLogic(detectFlowSensor1(), readTimeCounter(), &startFlowTimeTank1,
+                            &endFlowRateTimeTank1, &stateStatusTank1, &previousStateStatusTank1, maxFlowTimeTank1, maxNoFlowTimeTank1);
+
+        // if(detectFlowSensor1() == 0){
+        //                 PORTB ^= (1 << EXTERNALLEDPIN);
+        // }else{
+        //                 PORTB = PORTB & ~(1 << EXTERNALLEDPIN);
+        // }
+        delayMillisecond(1000);
+        timeCounter++;
     }
 
     // while(1){
@@ -176,6 +462,7 @@ ISR(PCINT0_vect)
     }
     if (flag)
     {
+
         setupADC(3);
 
         // PORTB ^= (1 << EXTERNALLEDPIN);
@@ -203,30 +490,30 @@ ISR(ADC_vect)
     int adc_l = ADCL;                        // value of Input  Voltage in lower register
     int adc_val = (ADCH << 8) | adc_l;       // Reading ADCH and coimbining the data
     double voltage = (adc_val * 5.0) / 1024; // select 5 volts as reference
-    if (voltage > 4.0)
-    {
+    // if (voltage > 2.5)
+    // {
 
-        if (adcStateVariable == 0)
-        {
-            PORTB = PORTB & ~(1 << LEDPIN);
-        }
-        else
-        {
-            PORTB = PORTB & ~(1 << EXTERNALLEDPIN);
-        }
-        // PORTB |=   (0 << LEDPIN);
-    }
-    else
-    {
-        if (adcStateVariable == 0)
-        {
-            PORTB |= (1 << LEDPIN);
-        }
-        else
-        {
-            PORTB |= (1 << EXTERNALLEDPIN);
-        }
-    }
+    //     if (adcStateVariable == 0)
+    //     {
+    //         PORTB = PORTB & ~(1 << LEDPIN);
+    //     }
+    //     else
+    //     {
+    //         PORTB = PORTB & ~(1 << EXTERNALLEDPIN);
+    //     }
+    //     // PORTB |=   (0 << LEDPIN);
+    // }
+    // else
+    // {
+    //     if (adcStateVariable == 0)
+    //     {
+    //         PORTB |= (1 << LEDPIN);
+    //     }
+    //     else
+    //     {
+    //         PORTB |= (1 << EXTERNALLEDPIN);
+    //     }
+    // }
 
     if (adcStateVariable == 0)
     {
