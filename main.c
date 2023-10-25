@@ -19,12 +19,14 @@ volatile time_t timeCounter = 0;
 
 volatile char stateStatusTank1 = 100; // 0 means no waterflow, 1 means water flow, 2 is error, 100 means need initalize
 volatile char previousStateStatusTank1 = 0;
-const time_t maxFlowTimeTank1 = 1;
+time_t maxFlowTimeTank1 = 4;
 // volatile char maxFlowTimeErrorCounterTank1 = 0;
-const time_t maxNoFlowTimeTank1 = 2;
+time_t maxNoFlowTimeTank1 = 2;
 // volatile char maxNoFlowTimeErrorCounterTank1 = 0;
 volatile time_t startFlowTimeTank1;
 volatile time_t endFlowRateTimeTank1;
+
+volatile double PIN3AdcReading = 0;
 
 #define BV_MASK(bit) (1 << (bit))
 // the trigger function for timer 0
@@ -158,7 +160,7 @@ void controlLEDBaseOnStatus(char stateStatus, char previousStateStatus, char err
     // // 1. turn off the led (in sink operation)
     // PORTB |= (1 << errorLEDPin);
     // SHOULD error be erased?
-    if ( previousStateStatus == 2 ||stateStatus == 2 )
+    if (previousStateStatus == 2 || stateStatus == 2)
     {
         // digitalWrite(errorLEDPin, HIGH);
         //  means in error
@@ -168,15 +170,14 @@ void controlLEDBaseOnStatus(char stateStatus, char previousStateStatus, char err
             // toggle led
             PORTB ^= (1 << errorLEDPin);
             // digitalWrite(noFlowPresentLEDPin, HIGH);
-        }else
+        }
+        else
         {
             // means constant water flow
             // just turn on the error led
             PORTB = PORTB & ~(1 << errorLEDPin);
             // digitalWrite(flowPresentLEDPin, HIGH);
         }
-
-        
     }
     else
     {
@@ -186,6 +187,15 @@ void controlLEDBaseOnStatus(char stateStatus, char previousStateStatus, char err
     }
 }
 
+void initializeTankTimerInfo()
+{
+
+    stateStatusTank1 = 100;
+    previousStateStatusTank1 = 0;
+    timeCounter = 0;
+    startFlowTimeTank1 = 0;
+    endFlowRateTimeTank1 = 0;
+}
 void readTankSensorLogic(char sensorVal, time_t timeNow, volatile time_t *startFlowTimePtr, volatile time_t *endFlowRateTimePtr,
                          volatile char *stateStatusPtr, volatile char *previousStateStatusPtr,
                          const time_t maxFlowTime,
@@ -311,7 +321,7 @@ void readTankSensorLogic(char sensorVal, time_t timeNow, volatile time_t *startF
         // do nothing in the error state, since I am not sending any more message to email
         // TODO: maybe do an alarm?
 
-        if (*previousStateStatusPtr == 1 )
+        if (*previousStateStatusPtr == 1)
         {
             //   Serial.print("Error for water is flowing: ");
             //   time_t diff = timeDifference(*startFlowTimePtr, timeNow);
@@ -338,7 +348,7 @@ void readTankSensorLogic(char sensorVal, time_t timeNow, volatile time_t *startF
             //     (*maxFlowTimeErrorCounterPtr)++;
             //     (*maxNoFlowTimeErrorCounterPtr) = 0;
             //   }
-     
+
             updateStateStatus(previousStateStatusPtr, stateStatusPtr, 1);
         }
         else
@@ -372,10 +382,9 @@ void readTankSensorLogic(char sensorVal, time_t timeNow, volatile time_t *startF
         }
     }
 
-
     controlLEDBaseOnStatus(*stateStatusPtr, *previousStateStatusPtr, EXTERNALLEDPIN);
     //   if(tankNumber == 1){
-    //controlLEDBaseOnStatus(*stateStatusPtr, *previousStateStatusPtr, EXTERNALLEDPIN);
+    // controlLEDBaseOnStatus(*stateStatusPtr, *previousStateStatusPtr, EXTERNALLEDPIN);
     //   }else if(tankNumber == 2){
     //     controlLEDBaseOnStatus(stateStatusTank2, previousStateStatusTank2, ERROR_LED_TANK_2, FLOW_PRESENT_TANK_2, NO_FLOW_PRESENT_TANK_2);
     //   }else{
@@ -391,31 +400,69 @@ void init()
 
     setFallTriggerOnPCINTx(2); // set PCIN2 as fall triggered
     enableGlobalInterrupt();
+    initializeTankTimerInfo();
+}
+
+void updateTimerConstraint(char timerType, double voltageReading)
+{
+
+    char timeGain = 1;
+    time_t newTimeInMinute = 0;
+    if (voltageReading > 4.5)
+    {
+
+        newTimeInMinute = 6;
+    }
+    else if (voltageReading > 3.5)
+    {
+
+        newTimeInMinute = 5;
+    }
+    else if (voltageReading > 2.5)
+    {
+
+        newTimeInMinute = 4;
+    }
+    else if (voltageReading > 1.5)
+    {
+        newTimeInMinute = 3;
+    }
+    else if (voltageReading > 0.5)
+    {
+        newTimeInMinute = 2;
+    }
+    else
+    {
+        newTimeInMinute = 1;
+    }
+
+    newTimeInMinute *= 1;
+
+
+    if (timerType == 0)
+    {
+        // means update the maxNoFlowTime
+        maxNoFlowTimeTank1 = newTimeInMinute;
+    }
+    else
+    {
+        // means update the maxFlowTime
+        maxFlowTimeTank1 = newTimeInMinute;
+    }
+
+
 }
 int main()
 {
     // SREG |= BV_MASK(7);
     init();
-    PORTB |=   (1<< EXTERNALLEDPIN); // turn off led
+    PORTB |= (1 << EXTERNALLEDPIN); // turn off led
     // IDEAS
     //  use PCIE! to detect inital press
     //  then use software trigger on INT0 to configure and read from 2ADCd
     while (1)
     {
 
-        // if (adcStateVariable == 0)
-        // {
-        //     adcStateVariable = 1;
-        //     setupADC(4);
-        //     // PORTB |= ~BV_MASK(2);
-        // }
-        // else
-        // {
-        //     // PORTB |= BV_MASK(2);
-        //     adcStateVariable = 0;
-        //     setupADC(3);
-        // }
-        // PORTB ^=   (1 << LEDPIN);
         readTankSensorLogic(detectFlowSensor1(), readTimeCounter(), &startFlowTimeTank1,
                             &endFlowRateTimeTank1, &stateStatusTank1, &previousStateStatusTank1, maxFlowTimeTank1, maxNoFlowTimeTank1);
 
@@ -487,36 +534,12 @@ ISR(ADC_vect)
 
     // PORTB ^= (1 << LEDPIN);
 
-    int adc_l = ADCL;                        // value of Input  Voltage in lower register
-    int adc_val = (ADCH << 8) | adc_l;       // Reading ADCH and coimbining the data
+    int adc_l = ADCL;                  // value of Input  Voltage in lower register
+    int adc_val = (ADCH << 8) | adc_l; // Reading ADCH and coimbining the data
     double voltage = (adc_val * 5.0) / 1024; // select 5 volts as reference
-    // if (voltage > 2.5)
-    // {
-
-    //     if (adcStateVariable == 0)
-    //     {
-    //         PORTB = PORTB & ~(1 << LEDPIN);
-    //     }
-    //     else
-    //     {
-    //         PORTB = PORTB & ~(1 << EXTERNALLEDPIN);
-    //     }
-    //     // PORTB |=   (0 << LEDPIN);
-    // }
-    // else
-    // {
-    //     if (adcStateVariable == 0)
-    //     {
-    //         PORTB |= (1 << LEDPIN);
-    //     }
-    //     else
-    //     {
-    //         PORTB |= (1 << EXTERNALLEDPIN);
-    //     }
-    // }
-
     if (adcStateVariable == 0)
     {
+        PIN3AdcReading = voltage;
         adcStateVariable = 1;
 
         ADCSRA = 0;
@@ -524,6 +547,22 @@ ISR(ADC_vect)
     }
     else
     {
+
+
+
+
+        if (voltage <= 2.5)
+        {
+            updateTimerConstraint(0, PIN3AdcReading);
+        }
+        else
+        {
+            updateTimerConstraint(1, PIN3AdcReading);
+        }
+
+        // now, reset timer
+        initializeTankTimerInfo();
+
         // PORTB |= BV_MASK(2);
         adcStateVariable = 0;
         ADCSRA = 0; // disable ADC
