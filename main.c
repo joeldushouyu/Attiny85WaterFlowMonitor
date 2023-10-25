@@ -471,7 +471,7 @@ int main()
         // }else{
         //                 PORTB = PORTB & ~(1 << EXTERNALLEDPIN);
         // }
-        delayMillisecond(1000);
+        delayMillisecond(1020); // delay for 1ms
         timeCounter++;
     }
 
