@@ -19,7 +19,7 @@ volatile time_t timeCounter = 0;
 
 volatile char stateStatusTank1 = 100; // 0 means no waterflow, 1 means water flow, 2 is error, 100 means need initalize
 volatile char previousStateStatusTank1 = 0;
-time_t maxFlowTimeTank1 = 4;
+time_t maxFlowTimeTank1 = 10;
 // volatile char maxFlowTimeErrorCounterTank1 = 0;
 time_t maxNoFlowTimeTank1 = 2;
 // volatile char maxNoFlowTimeErrorCounterTank1 = 0;
@@ -436,7 +436,7 @@ void updateTimerConstraint(char timerType, double voltageReading)
         newTimeInMinute = 1;
     }
 
-    newTimeInMinute *= 1;
+    newTimeInMinute *= 10;
 
 
     if (timerType == 0)
@@ -471,7 +471,7 @@ int main()
         // }else{
         //                 PORTB = PORTB & ~(1 << EXTERNALLEDPIN);
         // }
-        delayMillisecond(1020); // delay for 1ms
+        delayMillisecond(1023); // delay for 1ms
         timeCounter++;
     }
 
