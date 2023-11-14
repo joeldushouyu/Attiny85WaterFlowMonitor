@@ -21,12 +21,14 @@ volatile char stateStatusTank1 = 100; // 0 means no waterflow, 1 means water flo
 volatile char previousStateStatusTank1 = 0;
 time_t maxFlowTimeTank1 = 10;
 // volatile char maxFlowTimeErrorCounterTank1 = 0;
-time_t maxNoFlowTimeTank1 = 2;
+time_t maxNoFlowTimeTank1 = 20;
 // volatile char maxNoFlowTimeErrorCounterTank1 = 0;
 volatile time_t startFlowTimeTank1;
 volatile time_t endFlowRateTimeTank1;
 
 volatile double PIN3AdcReading = 0;
+
+volatile char errorOccurred = 0; // flag used to record if ever error occurred
 
 #define BV_MASK(bit) (1 << (bit))
 // the trigger function for timer 0
@@ -58,6 +60,40 @@ void delayMillisecond(unsigned long time)
     }
 }
 
+
+void setupLEDReverseLogicPWMTimer(){
+    
+
+
+    // could ignore this?
+    // first of all, choose a time source
+    PLLCSR |= BV_MASK(1); // enable PLLE
+    PLLCSR |= BV_MASK(0); // set lock
+    PLLCSR = PLLCSR & ~(1 << 2);// set to System clock
+
+    TCCR1 |= BV_MASK(7);// reset CTC1 counter to 0
+
+    // for a 8 bit resolution, need to count to 255
+
+    // since the led is in sink configuration=> the logic is inverse
+    // output High voltage to turn off, output low voltage to turn on
+    TCCR1 |= BV_MASK(6)|BV_MASK(5)|BV_MASK(4);
+
+
+    OCR1C =0xff;  // set max to be 8 bit, (255 in base 10) scale 1MHZ  system clock to around 4KHZ by divide 256
+    TCCR1 |= BV_MASK(3)|BV_MASK(2) | BV_MASK(0); // scale to around 1hz by divide 4096
+
+    OCR1C =0xff;  // set max to be 8 bit, (255 in base 10)
+    // no need interrupt, thus no TIMSK
+    TIFR |= BV_MASK(6); // enable compare on 1A
+
+    //TODO: set OCRA1
+
+
+
+
+
+}
 // use set OCR0A to specific interrupt time(with prescaler of 8)
 void setUpTimer()
 {
@@ -69,7 +105,7 @@ void setUpTimer()
     TCCR0A |= BV_MASK(1); // TODO:
     TCCR0B |= BV_MASK(1);
     TCNT0 = 0x0;  // start counting from 0
-    OCR0A = 0x7D; // 1MHZ => 1000 times in 1 ms, if scale by 8, means need
+    OCR0A = 0x7D; // 1MHZ => 1000 times in 1 ms, if scale by 8, means need 125
     TIMSK |= BV_MASK(4);
     ; // enable interrupt?
 
@@ -167,23 +203,37 @@ void controlLEDBaseOnStatus(char stateStatus, char previousStateStatus, char err
         if (stateStatus == 0 || previousStateStatus == 0)
         {
             // means no flow present
-            // toggle led
-            PORTB ^= (1 << errorLEDPin);
+            OCR1A = 0xcf; // toggled led at 50% duty cycle
             // digitalWrite(noFlowPresentLEDPin, HIGH);
         }
         else
         {
             // means constant water flow
             // just turn on the error led
-            PORTB = PORTB & ~(1 << errorLEDPin);
+            OCR1A = 0xff; // turn on the led by set 100% duty cycle
             // digitalWrite(flowPresentLEDPin, HIGH);
         }
     }
     else
-    {
-        // means it is normal, no red light
-
-        PORTB |= (1 << errorLEDPin); // note is is in sink configure
+    {   
+        if(errorOccurred == 0){
+            OCR1A = 0x0; 
+        }else if(errorOccurred == 1){
+            OCR1A = 0xff; // means water flow constant occurred
+        }else{
+            // means no water flow occured
+            OCR1A = 0xcf; // toggled led at 50% duty cycle
+        }
+        //OCR1A = 0x0;
+        // // means it is normal, no red light
+        // if(errorOccurred == 0){
+        //     // means no error occur ever since power up
+        //     // turn off led
+        //     OCR1A = 0x0;
+        // }else{
+        //     // means error occurred, although it is not happing yet
+        //     OCR1A = 0xf; // fast blink
+        // }
     }
 }
 
@@ -195,6 +245,10 @@ void initializeTankTimerInfo()
     timeCounter = 0;
     startFlowTimeTank1 = 0;
     endFlowRateTimeTank1 = 0;
+
+
+    // also, reset the error flag
+    errorOccurred = 0;
 }
 void readTankSensorLogic(char sensorVal, time_t timeNow, volatile time_t *startFlowTimePtr, volatile time_t *endFlowRateTimePtr,
                          volatile char *stateStatusPtr, volatile char *previousStateStatusPtr,
@@ -348,7 +402,7 @@ void readTankSensorLogic(char sensorVal, time_t timeNow, volatile time_t *startF
             //     (*maxFlowTimeErrorCounterPtr)++;
             //     (*maxNoFlowTimeErrorCounterPtr) = 0;
             //   }
-
+            errorOccurred = 1;// mark error occurred in constant flowing
             updateStateStatus(previousStateStatusPtr, stateStatusPtr, 1);
         }
         else
@@ -378,6 +432,7 @@ void readTankSensorLogic(char sensorVal, time_t timeNow, volatile time_t *startF
             //     (*maxNoFlowTimeErrorCounterPtr)++;
             //   }
             // controlLEDBaseOnStatus(0,2, EXTERNALLEDPIN);
+            errorOccurred = 2; // means error occurred when no flow detected
             updateStateStatus(previousStateStatusPtr, stateStatusPtr, 0);
         }
     }
@@ -401,6 +456,8 @@ void init()
     setFallTriggerOnPCINTx(2); // set PCIN2 as fall triggered
     enableGlobalInterrupt();
     initializeTankTimerInfo();
+
+    setupLEDReverseLogicPWMTimer();
 }
 
 void updateTimerConstraint(char timerType, double voltageReading)
@@ -457,6 +514,16 @@ int main()
     // SREG |= BV_MASK(7);
     init();
     PORTB |= (1 << EXTERNALLEDPIN); // turn off led
+
+    // // // // TEST PWM led
+    // // TCCR1 &= 0xf0;
+    // // TCCR1 |= BV_MASK(2) ; // scale 1MHZ  system clock to 488.2 HZ by divide by 2048
+    // OCR1A = 0x0f;//0xcc;
+    // while(1){
+
+    //     ;
+    // }
+
     // IDEAS
     //  use PCIE! to detect inital press
     //  then use software trigger on INT0 to configure and read from 2ADCd
@@ -471,7 +538,10 @@ int main()
         // }else{
         //                 PORTB = PORTB & ~(1 << EXTERNALLEDPIN);
         // }
-        delayMillisecond(1023); // delay for 1ms
+
+        // for 24: 
+        // 10: +20 second 20: 4t0 -second 30: + 1minute: 40: +1minutr 16 second 50:+1minute 34 second 60: + 1 minute 47 second
+        delayMillisecond(1024); // delay for 1ms
         timeCounter++;
     }
 
